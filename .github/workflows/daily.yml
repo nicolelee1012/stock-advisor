@@ -1,0 +1,49 @@
+name: daily-prediction
+
+# Runs the daily pipeline in GitHub's cloud (no laptop required), then commits
+# the updated predictions/outcomes back so the deployed dashboard refreshes.
+on:
+  schedule:
+    # 21:30 UTC = 14:30 US Pacific / 17:30 Eastern, ~2h after the 16:00 ET close.
+    # Cron in Actions is UTC and only fires on weekdays here (Mon-Fri).
+    - cron: "30 21 * * 1-5"
+  workflow_dispatch: {}   # allow manual "Run workflow" from the Actions tab
+
+permissions:
+  contents: write          # needed to commit results back to the repo
+
+concurrency:
+  group: daily-prediction
+  cancel-in-progress: false
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: System deps (OpenMP for LightGBM)
+        run: sudo apt-get update && sudo apt-get install -y libgomp1
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      - name: Run daily pipeline (evaluate matured picks, then predict)
+        run: python scripts/run_daily.py
+
+      - name: Commit updated results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/trading.db
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "daily: update predictions/outcomes [skip ci]"
+            git push
+          fi

@@ -1,0 +1,21 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+
+# Streamlit secrets (never commit API keys)
+.streamlit/secrets.toml
+
+# Large, regenerable EDGAR per-ticker cache (the consolidated edgar_facts.csv IS committed)
+data/edgar/
+
+# Logs
+data/*.log
+
+# NOTE: we intentionally COMMIT these so the deployed dashboard + Action have data:
+#   data/sp500.csv  data/model.joblib  data/edgar_facts.csv
+#   data/trading.db  data/backtest_*.csv

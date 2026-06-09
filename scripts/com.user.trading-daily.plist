@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd job: run the daily prediction pipeline every weekday after US market close.
+
+  Install:
+    cp scripts/com.user.trading-daily.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.user.trading-daily.plist
+
+  Check / remove:
+    launchctl list | grep trading
+    launchctl unload ~/Library/LaunchAgents/com.user.trading-daily.plist
+
+  Runs at 14:30 local (Pacific) = 17:30 Eastern, ~2h after the 16:00 ET close,
+  Monday–Friday. Adjust the Hour below if you're not on Pacific time.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.trading-daily</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/nicolelee/Desktop/trading/.venv/bin/python</string>
+        <string>/Users/nicolelee/Desktop/trading/scripts/run_daily.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/nicolelee/Desktop/trading</string>
+
+    <!-- Mon–Fri at 14:30 local time -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>30</integer></dict>
+    </array>
+
+    <!-- If the Mac was asleep at the scheduled time, run as soon as it wakes. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/nicolelee/Desktop/trading/data/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nicolelee/Desktop/trading/data/launchd.err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,16 @@
+# Core data + numerics
+pandas>=2.0
+numpy>=1.24
+
+# Market data (free, no API key). Swap/augment with Polygon/Alpha Vantage later.
+yfinance>=0.2.40
+
+# Models
+scikit-learn>=1.3
+scipy>=1.10          # spearman IC in walk-forward validation
+joblib>=1.3          # persist the trained model artifact
+lightgbm>=4.0        # needs libomp on macOS: `brew install libomp`
+
+# Dashboard
+streamlit>=1.30
+altair>=5.0
