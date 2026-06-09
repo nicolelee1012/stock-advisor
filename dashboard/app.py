@@ -98,6 +98,45 @@ with tab_record:
                .mean().cumsum().reset_index().set_index("run_date"))
         st.line_chart(cum)
 
+        # Does a higher predicted score actually map to a better real outcome?
+        st.subheader("Did the model's conviction match reality?")
+        ic = scored["score"].corr(scored["excess_return"], method="spearman")
+        st.caption(f"Realized rank correlation (IC) between predicted score and "
+                   f"actual excess return: **{ic:+.3f}** "
+                   f"(positive = higher-conviction picks did better; ~0 = no relationship).")
+        st.scatter_chart(scored, x="score", y="excess_return", color="hit")
+
+    # ---- Interactive drill-down: outlook on a date vs. what happened -------
+    st.divider()
+    st.subheader("🔭 Outlook vs. reality — pick a run date")
+    run_dates = sorted(merged["run_date"].unique(), reverse=True)
+    chosen = st.selectbox("Run date", run_dates, index=0)
+    batch = merged[merged["run_date"] == chosen].sort_values("rank")
+    matured = batch["excess_return"].notna().any()
+    horizon = int(batch["horizon_days"].iloc[0])
+
+    if matured:
+        hit_rate = batch["hit"].mean()
+        st.caption(f"On **{chosen}**, the model flagged these as top picks for the "
+                   f"~{horizon}-trading-day window. **{int(batch['hit'].sum())}/"
+                   f"{len(batch)} beat {config.BENCHMARK}** (hit rate {hit_rate:.0%}).")
+        view = batch[["rank", "ticker", "score", "realized_return",
+                      "benchmark_return", "excess_return", "hit"]].copy()
+        st.dataframe(view.rename(columns={"score": "predicted score",
+                     "realized_return": "actual return",
+                     "excess_return": "vs SPY"}),
+                     hide_index=True, use_container_width=True)
+        # Predicted conviction vs actual excess return, per pick.
+        chart_df = batch.set_index("ticker")[["excess_return"]]
+        st.bar_chart(chart_df, y="excess_return")
+    else:
+        st.info(f"This batch from **{chosen}** hasn't matured yet — its "
+                f"~{horizon}-day window is still open. Here's the outlook:")
+        st.dataframe(batch[["rank", "ticker", "score", "entry_price", "thesis"]]
+                     .rename(columns={"score": "predicted score",
+                                      "entry_price": "entry $", "thesis": "why"}),
+                     hide_index=True, use_container_width=True)
+
 # --------------------------------------------------------------------------
 with tab_backtest:
     st.subheader("Leak-free walk-forward backtest (net of fees)")

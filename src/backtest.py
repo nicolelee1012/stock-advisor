@@ -109,7 +109,8 @@ def run_backtest(prices, strategy, horizon=None, cadence=None, top_n=None,
 
 
 def run_walkforward_model(prices, horizon=None, cadence=None, top_n=None,
-                          cost_bps=None, retrain_every=4, min_train_dates=60):
+                          cost_bps=None, retrain_every=4, min_train_dates=60,
+                          risk_managed=False, sector_map=None):
     """Leak-free backtest of the TRAINED model.
 
     The critical difference from naively backtesting a globally-trained model:
@@ -118,15 +119,20 @@ def run_walkforward_model(prices, horizon=None, cadence=None, top_n=None,
     model never sees the future it's being tested on. We retrain every
     `retrain_every` periods to keep it affordable.
 
+    risk_managed=False: equal-weight top_n (the simple strategy).
+    risk_managed=True:  position weights from portfolio.build_weights (inverse-vol,
+                        sector/position caps, vol targeting with a cash buffer).
+
     This is the number that actually matters — if it doesn't beat the baselines
     here, the model has no edge, regardless of how good in-sample looks.
     """
-    from src import dataset, train
+    from src import dataset, train, portfolio
 
     horizon = horizon or config.HORIZON_DAYS
     cadence = cadence or horizon
-    top_n = top_n or config.TOP_N
+    top_n = top_n or (config.RISK_N_HOLDINGS if risk_managed else config.TOP_N)
     cost_bps = config.TRANSACTION_COST_BPS if cost_bps is None else cost_bps
+    sector_map = sector_map or {}
 
     panel = dataset.build_panel(horizon=horizon, cadence=cadence,
                                 prices=prices, verbose=False)
@@ -137,7 +143,7 @@ def run_walkforward_model(prices, horizon=None, cadence=None, top_n=None,
 
     equity = 1.0
     curve = {}
-    prev_holds = set()
+    prev_w = {}            # ticker -> weight from the prior rebalance (for turnover)
     reg = None
     periods_since_fit = 0
 
@@ -155,27 +161,112 @@ def run_walkforward_model(prices, horizon=None, cadence=None, top_n=None,
         feats_t = panel[panel["date"] == t]
         if feats_t.empty:
             continue
-        preds = reg.predict(feats_t[dataset.FEATURE_COLS])
-        holds = (feats_t.assign(_p=preds).sort_values("_p", ascending=False)
-                 .head(top_n)["ticker"].tolist())
-        holds = [h for h in holds if h in close.columns]
-        if not holds:
+        preds = feats_t.assign(_p=reg.predict(feats_t[dataset.FEATURE_COLS]))
+        picks = preds.sort_values("_p", ascending=False).head(top_n)
+        picks = picks[picks["ticker"].isin(close.columns)]
+        if picks.empty:
+            continue
+
+        # Position weights (ticker -> weight; cash is the residual to 1.0).
+        if risk_managed:
+            w = portfolio.build_weights(picks, sector_map)
+            w.pop("__cash__", None)
+        else:
+            n = len(picks)
+            w = {tk: 1.0 / n for tk in picks["ticker"]}
+
+        future = all_dates[all_dates >= t]
+        if len(future) <= horizon:
+            break
+        exit_date = future[horizon]
+
+        # Weighted basket return (uninvested weight sits in cash, return 0).
+        rets = close.loc[exit_date, list(w)] / close.loc[t, list(w)] - 1.0
+        period_ret = float(sum(w[tk] * rets[tk] for tk in w))
+
+        # Turnover = half the sum of absolute weight changes across all names.
+        names = set(w) | set(prev_w)
+        turnover = 0.5 * sum(abs(w.get(tk, 0.0) - prev_w.get(tk, 0.0)) for tk in names)
+        equity *= (1.0 + period_ret - turnover * (cost_bps / 10_000.0))
+        curve[exit_date] = equity
+        prev_w = w
+
+    return _summarize(pd.Series(curve), cadence, horizon)
+
+
+def run_walkforward_variants(prices, sector_map=None, horizon=None, cadence=None,
+                             cost_bps=None, retrain_every=4, min_train_dates=60):
+    """One leak-free walk-forward pass, evaluated under BOTH weighting schemes.
+
+    The model's predictions are identical across schemes; only portfolio
+    construction differs. Running a single pass keeps them strictly comparable
+    and avoids retraining the model twice. Returns
+    {"model_walkforward": summary, "model_risk_managed": summary}.
+    """
+    from src import dataset, train, portfolio
+
+    horizon = horizon or config.HORIZON_DAYS
+    cadence = cadence or horizon
+    cost_bps = config.TRANSACTION_COST_BPS if cost_bps is None else cost_bps
+    sector_map = sector_map or {}
+    n_plain, n_risk = config.TOP_N, config.RISK_N_HOLDINGS
+
+    panel = dataset.build_panel(horizon=horizon, cadence=cadence,
+                                prices=prices, verbose=False)
+    close = prices.pivot_table(index="date", columns="ticker",
+                               values="close").sort_index()
+    all_dates = close.index
+    panel_dates = pd.Series(sorted(panel["date"].unique()))
+
+    eq = {"plain": 1.0, "risk": 1.0}
+    curves = {"plain": {}, "risk": {}}
+    prev_w = {"plain": {}, "risk": {}}
+    reg, periods_since_fit = None, 0
+
+    for t in panel_dates:
+        train_rows = panel[panel["date"] < t]
+        if train_rows["date"].nunique() < min_train_dates:
+            continue
+        if reg is None or periods_since_fit >= retrain_every:
+            reg, _ = train._make_regressor()
+            reg.fit(train_rows[dataset.FEATURE_COLS], train_rows[dataset.LABEL_COL])
+            periods_since_fit = 0
+        periods_since_fit += 1
+
+        feats_t = panel[panel["date"] == t]
+        if feats_t.empty:
+            continue
+        ranked = (feats_t.assign(_p=reg.predict(feats_t[dataset.FEATURE_COLS]))
+                  .sort_values("_p", ascending=False))
+        ranked = ranked[ranked["ticker"].isin(close.columns)]
+        if ranked.empty:
             continue
 
         future = all_dates[all_dates >= t]
         if len(future) <= horizon:
             break
         exit_date = future[horizon]
-        period_ret = float((close.loc[exit_date, holds] / close.loc[t, holds] - 1.0).mean())
 
-        new_set = set(holds)
-        turnover = (len(new_set.symmetric_difference(prev_holds)) / (2 * max(len(new_set), 1))
-                    if prev_holds else 1.0)
-        equity *= (1.0 + period_ret - turnover * (cost_bps / 10_000.0))
-        curve[exit_date] = equity
-        prev_holds = new_set
+        # Equal-weight top-N (plain) and risk-managed weights (risk).
+        plain_picks = ranked.head(n_plain)
+        w_plain = {tk: 1.0 / len(plain_picks) for tk in plain_picks["ticker"]}
+        w_risk = portfolio.build_weights(ranked.head(n_risk), sector_map)
+        w_risk.pop("__cash__", None)
 
-    return _summarize(pd.Series(curve), cadence, horizon)
+        for key, w in (("plain", w_plain), ("risk", w_risk)):
+            rets = close.loc[exit_date, list(w)] / close.loc[t, list(w)] - 1.0
+            period_ret = float(sum(w[tk] * rets[tk] for tk in w))
+            names = set(w) | set(prev_w[key])
+            turnover = 0.5 * sum(abs(w.get(tk, 0.0) - prev_w[key].get(tk, 0.0))
+                                 for tk in names)
+            eq[key] *= (1.0 + period_ret - turnover * (cost_bps / 10_000.0))
+            curves[key][exit_date] = eq[key]
+            prev_w[key] = w
+
+    return {
+        "model_walkforward": _summarize(pd.Series(curves["plain"]), cadence, horizon),
+        "model_risk_managed": _summarize(pd.Series(curves["risk"]), cadence, horizon),
+    }
 
 
 def run_buy_and_hold(prices, ticker=None):
@@ -225,14 +316,17 @@ def compare_all(prices=None, top_n=None):
         tickers = list(config.UNIVERSE) + [config.BENCHMARK]
         prices = data_loader.get_price_history(tickers=tickers, period_days=8 * 365)
 
+    from src import universe
+    sector_map = universe.load_sectors()
+
     baselines = {
         "momentum_baseline": strat_momentum(top_n or config.TOP_N),
         "equal_weight": strat_equal_weight,
     }
     results = {name: run_backtest(prices, strat, top_n=top_n)
                for name, strat in baselines.items()}
-    # The trained model uses the LEAK-FREE walk-forward path, not strat_model.
-    results["model_walkforward"] = run_walkforward_model(prices, top_n=top_n)
+    # One walk-forward pass, evaluated equal-weight AND risk-managed.
+    results.update(run_walkforward_variants(prices, sector_map=sector_map))
     results["buy_hold_SPY"] = run_buy_and_hold(prices)
 
     table = pd.DataFrame({

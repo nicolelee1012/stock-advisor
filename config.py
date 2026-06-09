@@ -68,3 +68,15 @@ HISTORY_LOOKBACK_DAYS = 400
 # ---------------------------------------------------------------------------
 # Round-trip cost assumption in basis points (commissions + half-spread + slippage).
 TRANSACTION_COST_BPS = 10  # 0.10% per round trip, conservative for liquid large-caps
+
+# ---------------------------------------------------------------------------
+# Risk controls (portfolio construction). These convert a ranked list into
+# position weights, aiming to lift risk-adjusted return (Sharpe) and tame
+# drawdowns rather than chase raw return. See src/portfolio.py.
+# ---------------------------------------------------------------------------
+RISK_N_HOLDINGS = 20        # hold more names than TOP_N -> less idiosyncratic risk
+TARGET_VOL = 0.18           # annualized portfolio vol target; scale exposure toward it
+MAX_POSITION_WEIGHT = 0.12  # cap any single name
+MAX_SECTOR_WEIGHT = 0.30    # cap any one GICS sector
+MIN_EXPOSURE = 0.30         # never go below this fraction invested (avoid all-cash)
+ASSUMED_CORR = 0.30         # avg pairwise stock correlation, for portfolio-vol estimate
