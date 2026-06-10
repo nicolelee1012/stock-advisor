@@ -10,8 +10,9 @@ __pycache__/
 # Streamlit secrets (never commit API keys)
 .streamlit/secrets.toml
 
-# Large, regenerable EDGAR per-ticker cache (the consolidated edgar_facts.csv IS committed)
+# Large, regenerable per-ticker caches (the consolidated CSVs ARE committed)
 data/edgar/
+data/estimates/
 
 # Logs
 data/*.log

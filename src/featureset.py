@@ -11,27 +11,37 @@ falls back to price-only behavior gracefully.
 
 import pandas as pd
 
-from src import features, fundamentals, edgar
+from src import features, fundamentals, edgar, estimate_features, estimates
 
 PRICE_COLS = ["ret_1m", "ret_3m", "ret_6m", "vol_1m",
               "dist_sma50", "dist_sma200", "vol_trend"]
 FUND_COLS = fundamentals.FUND_COLS
-FEATURE_COLS = PRICE_COLS + FUND_COLS
+EST_COLS = estimate_features.EST_COLS
+FEATURE_COLS = PRICE_COLS + FUND_COLS + EST_COLS
 
-# Module-level cache so we prepare the (large) facts structure only once per run.
-_PREPARED = None
+# Module-level caches so we prepare the (large) event structures only once per run.
+_PREPARED_FACTS = None
+_PREPARED_EST = None
 
 
 def prepared_facts():
-    global _PREPARED
-    if _PREPARED is None:
-        _PREPARED = fundamentals.prepare_facts(edgar.load_facts())
-    return _PREPARED
+    global _PREPARED_FACTS
+    if _PREPARED_FACTS is None:
+        _PREPARED_FACTS = fundamentals.prepare_facts(edgar.load_facts())
+    return _PREPARED_FACTS
+
+
+def prepared_estimates():
+    global _PREPARED_EST
+    if _PREPARED_EST is None:
+        _PREPARED_EST = estimate_features.prepare(
+            estimates.load_surprises(), estimates.load_analyst())
+    return _PREPARED_EST
 
 
 def build_features(prices: pd.DataFrame, as_of=None) -> pd.DataFrame:
-    """Assemble price + fundamental features as of `as_of` (default: latest date
-    in `prices`). Returns one row per ticker with all FEATURE_COLS present.
+    """Assemble price + fundamental + surprise/analyst features as of `as_of`
+    (default: latest date in `prices`). One row per ticker, all FEATURE_COLS present.
     """
     snapshot = prices if as_of is None else prices[prices["date"] <= pd.to_datetime(as_of)]
     price_feat = features.compute_features(snapshot)
@@ -39,11 +49,14 @@ def build_features(prices: pd.DataFrame, as_of=None) -> pd.DataFrame:
         return price_feat
 
     eff_asof = as_of or price_feat["as_of"].iloc[0]
-    fund_feat = fundamentals.compute_fundamental_features(
-        prepared_facts(), price_feat["ticker"].tolist(), eff_asof)
+    tickers = price_feat["ticker"].tolist()
 
-    merged = price_feat.merge(fund_feat, on="ticker", how="left")
-    # earnings_recent is a 0/1 flag; missing -> 0. Other fundamentals stay NaN
+    fund_feat = fundamentals.compute_fundamental_features(prepared_facts(), tickers, eff_asof)
+    est_feat = estimate_features.compute(prepared_estimates(), tickers, eff_asof)
+
+    merged = (price_feat.merge(fund_feat, on="ticker", how="left")
+              .merge(est_feat, on="ticker", how="left"))
+    # earnings_recent is a 0/1 flag; missing -> 0. Other features stay NaN
     # (tree models handle NaN; the panel builder decides whether to drop).
     merged["earnings_recent"] = merged["earnings_recent"].fillna(0)
     return merged
