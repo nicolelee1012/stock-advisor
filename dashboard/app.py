@@ -59,7 +59,9 @@ merged = preds.merge(outcomes, on="pred_id", how="left")
 
 # Each risk profile is tracked as its own model_version variant (…-balanced,
 # …-aggressive). Derive a clean profile label and let the user switch between them.
-_known = set(config.PROFILES)
+# Resilient to a stale/old config (e.g. mid-redeploy): fall back to known names.
+_known = set(getattr(config, "PROFILES", {})) or {"balanced", "aggressive"}
+_default_profile = getattr(config, "DEFAULT_PROFILE", "balanced")
 def _profile(mv):
     seg = str(mv).rsplit("-", 1)[-1]
     return seg if seg in _known else "legacy"
@@ -67,7 +69,7 @@ for _df in (preds, merged):
     _df["profile"] = _df["model_version"].map(_profile)
 
 profiles = sorted(preds["profile"].unique())
-default_ix = profiles.index(config.DEFAULT_PROFILE) if config.DEFAULT_PROFILE in profiles else 0
+default_ix = profiles.index(_default_profile) if _default_profile in profiles else 0
 sel = st.sidebar.radio("Risk profile", profiles, index=default_ix)
 st.sidebar.caption({
     "balanced": "Diversified, vol-targeted — de-risks in turbulence (lower drawdown).",
