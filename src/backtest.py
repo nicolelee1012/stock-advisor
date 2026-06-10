@@ -269,6 +269,56 @@ def run_walkforward_variants(prices, sector_map=None, horizon=None, cadence=None
     }
 
 
+def run_weighted_strategy(prices, rank_fn, profile, sector_map=None, horizon=None,
+                          cadence=None, cost_bps=None,
+                          start_after=config.HISTORY_LOOKBACK_DAYS):
+    """Backtest a (training-free) ranking under a risk-managed profile.
+
+    rank_fn(feat_df) -> feat_df sorted best-first. Used to apply the risk-control
+    layer (portfolio.build_weights) to a simple signal like momentum, so we can
+    test "winning signal + winning risk management".
+    """
+    from src import portfolio
+
+    horizon = horizon or config.HORIZON_DAYS
+    cadence = cadence or horizon
+    cost_bps = config.TRANSACTION_COST_BPS if cost_bps is None else cost_bps
+    sector_map = sector_map or {}
+    n = portfolio.get_profile(profile)["n_holdings"]
+
+    close = prices.pivot_table(index="date", columns="ticker", values="close").sort_index()
+    all_dates = close.index
+    rebalance_dates = all_dates[start_after::cadence]
+
+    equity, curve, prev_w = 1.0, {}, {}
+    for t in rebalance_dates:
+        future = all_dates[all_dates >= t]
+        if len(future) <= horizon:
+            break
+        exit_date = future[horizon]
+
+        feat = features.compute_features(prices[prices["date"] <= t])
+        feat = feat[feat["ticker"] != config.BENCHMARK]
+        if feat.empty:
+            continue
+        picks = rank_fn(feat).head(n)
+        picks = picks[picks["ticker"].isin(close.columns)]
+        if picks.empty:
+            continue
+
+        w = portfolio.build_weights(picks, sector_map, profile)
+        w.pop("__cash__", None)
+        rets = close.loc[exit_date, list(w)] / close.loc[t, list(w)] - 1.0
+        period_ret = float(sum(w[tk] * rets[tk] for tk in w))
+        names = set(w) | set(prev_w)
+        turnover = 0.5 * sum(abs(w.get(tk, 0.0) - prev_w.get(tk, 0.0)) for tk in names)
+        equity *= (1.0 + period_ret - turnover * (cost_bps / 10_000.0))
+        curve[exit_date] = equity
+        prev_w = w
+
+    return _summarize(pd.Series(curve), cadence, horizon)
+
+
 def run_buy_and_hold(prices, ticker=None):
     """Buy-and-hold a single ticker (default benchmark) — the simplest baseline."""
     ticker = ticker or config.BENCHMARK
@@ -327,6 +377,12 @@ def compare_all(prices=None, top_n=None):
                for name, strat in baselines.items()}
     # One walk-forward pass, evaluated equal-weight AND risk-managed.
     results.update(run_walkforward_variants(prices, sector_map=sector_map))
+    # Winning signal (momentum) + winning risk management, both profiles.
+    mom_rank = lambda f: f.sort_values("ret_3m", ascending=False)
+    results["momentum_balanced"] = run_weighted_strategy(
+        prices, mom_rank, "balanced", sector_map)
+    results["momentum_aggressive"] = run_weighted_strategy(
+        prices, mom_rank, "aggressive", sector_map)
     results["buy_hold_SPY"] = run_buy_and_hold(prices)
 
     table = pd.DataFrame({
