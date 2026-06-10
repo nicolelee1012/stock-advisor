@@ -80,3 +80,18 @@ MAX_POSITION_WEIGHT = 0.12  # cap any single name
 MAX_SECTOR_WEIGHT = 0.30    # cap any one GICS sector
 MIN_EXPOSURE = 0.30         # never go below this fraction invested (avoid all-cash)
 ASSUMED_CORR = 0.30         # avg pairwise stock correlation, for portfolio-vol estimate
+
+# ---------------------------------------------------------------------------
+# Risk profiles — different portfolio constructions of the SAME model, run live
+# side by side so you can compare their real forward track records.
+#   balanced:   diversified, vol-targeted, de-risks in turbulence (lower drawdown)
+#   aggressive: concentrated, always fully invested (higher return AND drawdown)
+# scheme: "inverse_vol" (calmer names get more) or "equal".
+# ---------------------------------------------------------------------------
+PROFILES = {
+    "balanced": dict(n_holdings=20, scheme="inverse_vol", target_vol=0.18,
+                     max_position=0.12, max_sector=0.30, min_exposure=0.30),
+    "aggressive": dict(n_holdings=10, scheme="equal", target_vol=0.40,
+                       max_position=0.20, max_sector=1.00, min_exposure=1.0),
+}
+DEFAULT_PROFILE = "balanced"

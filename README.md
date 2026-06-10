@@ -102,6 +102,20 @@ launchctl list | grep trading          # confirm it's scheduled
 Runs Mon–Fri at 14:30 Pacific (17:30 Eastern). Logs to `data/run.log` and
 `data/launchd.*.log`. Edit the `Hour` in the plist if you're not on Pacific time.
 
+## Risk profiles
+
+The same model is run under two portfolio constructions (config.PROFILES), tracked
+side by side so their real forward records can be compared:
+
+| Profile | Holdings | Weighting | Behavior |
+|---------|----------|-----------|----------|
+| **balanced** | 20 | inverse-vol, capped, vol-targeted | de-risks to cash in turbulence; lower drawdown |
+| **aggressive** | 10 | equal weight, fully invested | higher return *and* drawdown |
+
+Risk controls (`src/portfolio.py`): inverse-volatility weighting, per-position and
+per-sector caps (water-filled), and volatility targeting with a cash buffer. Switch
+profiles with the sidebar selector in the dashboard.
+
 ## Roadmap (next phases)
 
 1. **Trained model** — LightGBM ranker behind the same `rank()` interface, with

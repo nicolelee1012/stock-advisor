@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS predictions (
     ticker        TEXT NOT NULL,
     rank          INTEGER NOT NULL,         -- 1 = highest conviction
     score         REAL NOT NULL,            -- raw model score (higher = better)
+    weight        REAL,                     -- risk-managed portfolio weight (cash = 1 - sum)
     entry_price   REAL,                     -- close on run_date (basis for return)
     thesis        TEXT,                     -- human-readable "why"
     created_at    TEXT DEFAULT (datetime('now'))
@@ -73,6 +74,10 @@ def init_db(db_path: Path = None):
     """Create tables if they don't exist. Safe to call repeatedly."""
     with connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        # Migration: add `weight` to predictions tables created before risk profiles.
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(predictions)")]
+        if "weight" not in cols:
+            conn.execute("ALTER TABLE predictions ADD COLUMN weight REAL")
 
 
 def save_run(run_date, model_version, horizon_days, universe_size, benchmark, db_path=None):
@@ -111,9 +116,10 @@ def save_predictions(run_id, picks, db_path=None):
     """picks: list of dicts with ticker, rank, score, entry_price, thesis."""
     with connect(db_path) as conn:
         conn.executemany(
-            "INSERT INTO predictions (run_id, ticker, rank, score, entry_price, thesis) "
-            "VALUES (:run_id, :ticker, :rank, :score, :entry_price, :thesis)",
-            [{"run_id": run_id, **p} for p in picks],
+            "INSERT INTO predictions "
+            "(run_id, ticker, rank, score, weight, entry_price, thesis) "
+            "VALUES (:run_id, :ticker, :rank, :score, :weight, :entry_price, :thesis)",
+            [{"weight": None, **p, "run_id": run_id} for p in picks],
         )
 
 

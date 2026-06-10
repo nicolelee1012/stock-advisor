@@ -57,26 +57,54 @@ if preds.empty:
 
 merged = preds.merge(outcomes, on="pred_id", how="left")
 
+# Each risk profile is tracked as its own model_version variant (…-balanced,
+# …-aggressive). Derive a clean profile label and let the user switch between them.
+_known = set(config.PROFILES)
+def _profile(mv):
+    seg = str(mv).rsplit("-", 1)[-1]
+    return seg if seg in _known else "legacy"
+for _df in (preds, merged):
+    _df["profile"] = _df["model_version"].map(_profile)
+
+profiles = sorted(preds["profile"].unique())
+default_ix = profiles.index(config.DEFAULT_PROFILE) if config.DEFAULT_PROFILE in profiles else 0
+sel = st.sidebar.radio("Risk profile", profiles, index=default_ix)
+st.sidebar.caption({
+    "balanced": "Diversified, vol-targeted — de-risks in turbulence (lower drawdown).",
+    "aggressive": "Concentrated, fully invested — higher return *and* drawdown.",
+    "legacy": "Earlier runs made before risk profiles existed.",
+}.get(sel, ""))
+
+pp = preds[preds["profile"] == sel]
+mp = merged[merged["profile"] == sel]
+
 tab_today, tab_record, tab_backtest, tab_all = st.tabs(
     ["🎯 Today's picks", "📊 Track record", "🧪 Backtest", "🗂️ All predictions"])
 
 # --------------------------------------------------------------------------
 with tab_today:
-    latest_date = preds["run_date"].max()
-    today = preds[preds["run_date"] == latest_date].sort_values("rank")
-    st.subheader(f"Top {len(today)} for the next {config.HORIZON_DAYS} trading days")
-    st.caption(f"Run date: {latest_date} · model: {today['model_version'].iloc[0]}")
-    st.dataframe(
-        today[["rank", "ticker", "score", "entry_price", "thesis"]]
-        .rename(columns={"entry_price": "entry $", "thesis": "why"}),
-        hide_index=True, use_container_width=True,
-    )
+    latest_date = pp["run_date"].max()
+    today = pp[pp["run_date"] == latest_date].sort_values("rank")
+    invested = today["weight"].sum() if today["weight"].notna().any() else None
+    st.subheader(f"{sel.capitalize()} portfolio — {len(today)} holdings "
+                 f"for the next {config.HORIZON_DAYS} trading days")
+    cap = f"Run date: {latest_date} · model: {today['model_version'].iloc[0]}"
+    if invested is not None:
+        cap += f" · invested {invested:.0%}, cash {1 - invested:.0%}"
+    st.caption(cap)
+    cols = ["rank", "ticker", "weight", "score", "entry_price", "thesis"]
+    cols = [c for c in cols if c in today.columns]
+    show = today[cols].rename(columns={"weight": "weight", "entry_price": "entry $",
+                                       "thesis": "why"})
+    if "weight" in show:
+        show["weight"] = show["weight"].map(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
+    st.dataframe(show, hide_index=True, use_container_width=True)
     st.info("Each pick matures after the horizon, then gets scored vs "
             f"{config.BENCHMARK}. Check the Track record tab as outcomes fill in.")
 
 # --------------------------------------------------------------------------
 with tab_record:
-    scored = merged.dropna(subset=["excess_return"])
+    scored = mp.dropna(subset=["excess_return"])
     if scored.empty:
         st.info("No matured outcomes yet — come back after the horizon passes "
                 "(or back-test by predicting with an older as_of date).")
@@ -109,9 +137,9 @@ with tab_record:
     # ---- Interactive drill-down: outlook on a date vs. what happened -------
     st.divider()
     st.subheader("🔭 Outlook vs. reality — pick a run date")
-    run_dates = sorted(merged["run_date"].unique(), reverse=True)
+    run_dates = sorted(mp["run_date"].unique(), reverse=True)
     chosen = st.selectbox("Run date", run_dates, index=0)
-    batch = merged[merged["run_date"] == chosen].sort_values("rank")
+    batch = mp[mp["run_date"] == chosen].sort_values("rank")
     matured = batch["excess_return"].notna().any()
     horizon = int(batch["horizon_days"].iloc[0])
 

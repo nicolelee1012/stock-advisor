@@ -40,9 +40,12 @@ def main():
         log.exception("evaluate step failed (continuing to prediction)")
 
     try:
-        run_date, picks = predict.run_prediction()
-        log.info("saved %d picks for %s", len(picks), run_date)
-        log.info("picks: %s", ", ".join(picks["ticker"].tolist()))
+        results = predict.run_all_profiles()
+        for name, (run_date, picks) in results.items():
+            inv = picks["weight"].sum()
+            log.info("[%s] saved %d picks for %s (invested %.0f%%): %s",
+                     name, len(picks), run_date, inv * 100,
+                     ", ".join(picks["ticker"].tolist()))
     except Exception:
         log.exception("prediction step failed")
         return 1
