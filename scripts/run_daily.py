@@ -40,7 +40,7 @@ def main():
         log.exception("evaluate step failed (continuing to prediction)")
 
     try:
-        results = predict.run_all_profiles()
+        results = predict.run_all_strategies()
         for name, (run_date, picks) in results.items():
             inv = picks["weight"].sum()
             log.info("[%s] saved %d picks for %s (invested %.0f%%): %s",

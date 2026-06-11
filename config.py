@@ -95,3 +95,17 @@ PROFILES = {
                        max_position=0.20, max_sector=1.00, min_exposure=1.0),
 }
 DEFAULT_PROFILE = "balanced"
+
+# ---------------------------------------------------------------------------
+# Live strategies run every day, each tracked separately so their REAL forward
+# records can be compared head to head (backtests are bull-regime-biased).
+#   source: "model" (LightGBM ranker) or "momentum" (rank by 3-month return).
+#   profile: which portfolio construction from PROFILES to apply.
+# The strategy name is used as the run's model_version (its tracking key).
+# ---------------------------------------------------------------------------
+STRATEGIES = {
+    "model-balanced":   {"source": "model",    "profile": "balanced"},
+    "model-aggressive": {"source": "model",    "profile": "aggressive"},
+    "momentum":         {"source": "momentum", "profile": "aggressive"},
+}
+DEFAULT_STRATEGY = "model-balanced"

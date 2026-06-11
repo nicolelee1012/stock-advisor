@@ -59,26 +59,28 @@ merged = preds.merge(outcomes, on="pred_id", how="left")
 
 # Each risk profile is tracked as its own model_version variant (…-balanced,
 # …-aggressive). Derive a clean profile label and let the user switch between them.
+# Each live strategy is tracked separately (model_version == strategy name).
 # Resilient to a stale/old config (e.g. mid-redeploy): fall back to known names.
-_known = set(getattr(config, "PROFILES", {})) or {"balanced", "aggressive"}
-_default_profile = getattr(config, "DEFAULT_PROFILE", "balanced")
-def _profile(mv):
-    seg = str(mv).rsplit("-", 1)[-1]
-    return seg if seg in _known else "legacy"
+_known = set(getattr(config, "STRATEGIES", {})) or {
+    "model-balanced", "model-aggressive", "momentum"}
+_default = getattr(config, "DEFAULT_STRATEGY", "model-balanced")
+def _strategy(mv):
+    return mv if mv in _known else "legacy"
 for _df in (preds, merged):
-    _df["profile"] = _df["model_version"].map(_profile)
+    _df["strategy"] = _df["model_version"].map(_strategy)
 
-profiles = sorted(preds["profile"].unique())
-default_ix = profiles.index(_default_profile) if _default_profile in profiles else 0
-sel = st.sidebar.radio("Risk profile", profiles, index=default_ix)
+strategies = sorted(preds["strategy"].unique())
+default_ix = strategies.index(_default) if _default in strategies else 0
+sel = st.sidebar.radio("Strategy", strategies, index=default_ix)
 st.sidebar.caption({
-    "balanced": "Diversified, vol-targeted — de-risks in turbulence (lower drawdown).",
-    "aggressive": "Concentrated, fully invested — higher return *and* drawdown.",
-    "legacy": "Earlier runs made before risk profiles existed.",
+    "model-balanced": "ML model, diversified + vol-targeted (lower drawdown).",
+    "model-aggressive": "ML model, concentrated top-10, fully invested.",
+    "momentum": "Rank by 3-month momentum, concentrated (backtest champion).",
+    "legacy": "Earlier runs, before strategies were split out.",
 }.get(sel, ""))
 
-pp = preds[preds["profile"] == sel]
-mp = merged[merged["profile"] == sel]
+pp = preds[preds["strategy"] == sel]
+mp = merged[merged["strategy"] == sel]
 
 tab_today, tab_record, tab_backtest, tab_all = st.tabs(
     ["🎯 Today's picks", "📊 Track record", "🧪 Backtest", "🗂️ All predictions"])
@@ -88,7 +90,7 @@ with tab_today:
     latest_date = pp["run_date"].max()
     today = pp[pp["run_date"] == latest_date].sort_values("rank")
     invested = today["weight"].sum() if today["weight"].notna().any() else None
-    st.subheader(f"{sel.capitalize()} portfolio — {len(today)} holdings "
+    st.subheader(f"{sel} — {len(today)} holdings "
                  f"for the next {config.HORIZON_DAYS} trading days")
     cap = f"Run date: {latest_date} · model: {today['model_version'].iloc[0]}"
     if invested is not None:
